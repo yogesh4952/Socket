@@ -45,6 +45,11 @@ func main() {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
+	defer func() {
+		s.mu.Lock()
+		s.clients[conn] = false
+		s.mu.Unlock()
+	}()
 	reader := bufio.NewReader(conn)
 	for {
 		message, err := reader.ReadString('\n')
@@ -55,9 +60,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			} else {
 				log.Printf("Read error: %v", err)
 			}
-			s.mu.Lock()
-			delete(s.clients, conn)
-			s.mu.Unlock()
+
 			return
 		}
 
