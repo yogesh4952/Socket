@@ -2,14 +2,21 @@ package main
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 )
 
+type client struct {
+	name string
+	conn net.Conn
+}
+
 type Server struct {
-	clients map[net.Conn]bool
+	clients map[net.Conn]*client
 	mu      sync.Mutex
 }
 
@@ -21,7 +28,7 @@ func main() {
 	defer listener.Close()
 
 	server := &Server{
-		clients: make(map[net.Conn]bool),
+		clients: make(map[net.Conn]*client),
 	}
 	for {
 		conn, err := listener.Accept()
@@ -29,10 +36,6 @@ func main() {
 			log.Println("Error accepting conn", err)
 			continue
 		}
-
-		server.mu.Lock()
-		server.clients[conn] = true
-		server.mu.Unlock()
 		go server.handleConnection(conn)
 	}
 }
@@ -42,11 +45,27 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	defer func() {
 		s.mu.Lock()
-		s.clients[conn] = false
+
 		delete(s.clients, conn)
 		s.mu.Unlock()
 	}()
 	reader := bufio.NewReader(conn)
+
+	conn.Write([]byte("Enter username: "))
+	name, err := reader.ReadString('\n')
+	if err != nil {
+		log.Println("Error reading username: ", err)
+	}
+	name = strings.TrimSpace(name)
+
+	if name == "" {
+		name = conn.RemoteAddr().String()
+	}
+
+	s.mu.Lock()
+	s.clients[conn] = &client{name: name, conn: conn}
+	s.mu.Unlock()
+	log.Printf("Registered %q from %s", name, conn.RemoteAddr())
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {
@@ -60,25 +79,26 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		s.broadcast(conn, message)
+		s.broadcast(conn, name, message)
 
 	}
 }
 
-func (s *Server) broadcast(sender net.Conn, message string) {
+func (s *Server) broadcast(senderConn net.Conn, SenderName, message string) {
 	s.mu.Lock()
-	targets := make([]net.Conn, 0, len(s.clients))
+	targets := make([]*client, 0, len(s.clients))
 
-	for conn := range s.clients {
-		if conn != sender {
-			targets = append(targets, conn)
+	for c, cl := range s.clients {
+		if c != senderConn {
+			targets = append(targets, cl)
 		}
 	}
 	s.mu.Unlock()
 
-	for _, conn := range targets {
-		if _, err := conn.Write([]byte(message)); err != nil {
-			log.Printf("write to %v failed: %v", conn.RemoteAddr(), err)
+	ack := fmt.Sprintf("%s: %s", SenderName, message)
+	for _, cl := range targets {
+		if _, err := cl.conn.Write([]byte(ack)); err != nil {
+			log.Printf("write to %v failed: %v", cl, err)
 		}
 	}
 }
