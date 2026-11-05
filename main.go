@@ -16,8 +16,9 @@ type client struct {
 }
 
 type Server struct {
-	clients map[net.Conn]*client
-	mu      sync.Mutex
+	byConn map[net.Conn]*client
+	byName map[string]*client
+	mu     sync.Mutex
 }
 
 func main() {
@@ -28,7 +29,8 @@ func main() {
 	defer listener.Close()
 
 	server := &Server{
-		clients: make(map[net.Conn]*client),
+		byConn: make(map[net.Conn]*client),
+		byName: make(map[string]*client),
 	}
 	for {
 		conn, err := listener.Accept()
@@ -46,7 +48,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		s.mu.Lock()
 
-		delete(s.clients, conn)
+		delete(s.byConn, conn)
 		s.mu.Unlock()
 	}()
 	reader := bufio.NewReader(conn)
@@ -61,17 +63,20 @@ func (s *Server) handleConnection(conn net.Conn) {
 	if name == "" {
 		name = conn.RemoteAddr().String()
 	}
+	cl := &client{name: name, conn: conn}
 
-	s.mu.Lock()
-	s.clients[conn] = &client{name: name, conn: conn}
-	s.mu.Unlock()
+	if err := s.register(cl); err != nil {
+		conn.Write([]byte(err.Error() + "\n"))
+		log.Printf("Rejected %s: %v", conn.RemoteAddr(), err)
+		return
+	}
 	log.Printf("Registered %q from %s", name, conn.RemoteAddr())
 	for {
 		message, err := reader.ReadString('\n')
 		if err != nil {
 
 			if err == io.EOF {
-				log.Println("Client disconnected!!!")
+				log.Printf("%q disconnected!!!", cl.name)
 			} else {
 				log.Printf("Read error: %v", err)
 			}
@@ -79,23 +84,36 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		s.broadcast(conn, name, message)
+		s.broadcast(conn, message)
 
 	}
 }
 
-func (s *Server) broadcast(senderConn net.Conn, SenderName, message string) {
+func (s *Server) register(cl *client) error {
 	s.mu.Lock()
-	targets := make([]*client, 0, len(s.clients))
+	defer s.mu.Unlock()
 
-	for c, cl := range s.clients {
+	if _, exists := s.byName[cl.name]; exists {
+		return fmt.Errorf("username %q already taken", cl.name)
+	}
+	s.byConn[cl.conn] = cl
+	s.byName[cl.name] = cl
+	return nil
+}
+
+func (s *Server) broadcast(senderConn net.Conn, message string) {
+	s.mu.Lock()
+	sender := s.byConn[senderConn]
+	targets := make([]*client, 0, len(s.byConn))
+
+	for c, cl := range s.byConn {
 		if c != senderConn {
 			targets = append(targets, cl)
 		}
 	}
 	s.mu.Unlock()
 
-	ack := fmt.Sprintf("%s: %s", SenderName, message)
+	ack := fmt.Sprintf("%s: %s", sender.name, message)
 	for _, cl := range targets {
 		if _, err := cl.conn.Write([]byte(ack)); err != nil {
 			log.Printf("write to %v failed: %v", cl, err)
