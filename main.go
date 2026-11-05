@@ -2,11 +2,9 @@ package main
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"log"
 	"net"
-	"strings"
 	"sync"
 )
 
@@ -35,9 +33,6 @@ func main() {
 		server.mu.Lock()
 		server.clients[conn] = true
 		server.mu.Unlock()
-
-		fmt.Print("v", server.clients[conn])
-
 		go server.handleConnection(conn)
 	}
 }
@@ -48,6 +43,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer func() {
 		s.mu.Lock()
 		s.clients[conn] = false
+		delete(s.clients, conn)
 		s.mu.Unlock()
 	}()
 	reader := bufio.NewReader(conn)
@@ -64,13 +60,25 @@ func (s *Server) handleConnection(conn net.Conn) {
 			return
 		}
 
-		ackMsg := strings.TrimSpace(message)
-		response := fmt.Sprintf("ACK: %s\n", ackMsg)
+		s.broadcast(conn, message)
 
-		_, err = conn.Write([]byte(response))
-		if err != nil {
-			log.Printf("Server write error: %v", err)
-			return
+	}
+}
+
+func (s *Server) broadcast(sender net.Conn, message string) {
+	s.mu.Lock()
+	targets := make([]net.Conn, 0, len(s.clients))
+
+	for conn := range s.clients {
+		if conn != sender {
+			targets = append(targets, conn)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, conn := range targets {
+		if _, err := conn.Write([]byte(message)); err != nil {
+			log.Printf("write to %v failed: %v", conn.RemoteAddr(), err)
 		}
 	}
 }
