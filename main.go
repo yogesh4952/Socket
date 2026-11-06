@@ -82,11 +82,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			return
 		}
-		parts := strings.SplitN(message, " ", 2)
-		if len(parts) >= 2 {
-			username := parts[0]
-			message := parts[1]
-			s.privateMessage(cl, username, message)
+
+		contains := strings.Contains(message, "/msg")
+
+		if contains {
+			parts := strings.SplitN(message, " ", 3)
+			if len(parts) >= 3 {
+				username := parts[1]
+				message := parts[2]
+				s.privateMessage(cl, username, message)
+			}
 		} else {
 			s.broadcast(conn, message)
 		}
