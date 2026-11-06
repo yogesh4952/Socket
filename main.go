@@ -46,10 +46,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
 	defer func() {
-		s.mu.Lock()
-
-		delete(s.byConn, conn)
-		s.mu.Unlock()
+		s.unregister(conn)
 	}()
 	reader := bufio.NewReader(conn)
 
@@ -57,6 +54,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 	name, err := reader.ReadString('\n')
 	if err != nil {
 		log.Println("Error reading username: ", err)
+		return
 	}
 	name = strings.TrimSpace(name)
 
@@ -86,6 +84,16 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 		s.broadcast(conn, message)
 
+	}
+}
+
+func (s *Server) unregister(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if cl, exists := s.byConn[conn]; exists {
+		delete(s.byConn, cl.conn)
+		delete(s.byName, cl.name)
 	}
 }
 
