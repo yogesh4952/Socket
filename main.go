@@ -82,8 +82,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 			return
 		}
-
-		s.broadcast(conn, message)
+		parts := strings.SplitN(message, " ", 2)
+		if len(parts) >= 2 {
+			username := parts[0]
+			message := parts[1]
+			s.privateMessage(cl, username, message)
+		} else {
+			s.broadcast(conn, message)
+		}
 
 	}
 }
@@ -108,6 +114,29 @@ func (s *Server) register(cl *client) error {
 	s.byConn[cl.conn] = cl
 	s.byName[cl.name] = cl
 	return nil
+}
+
+func (s *Server) privateMessage(sender *client, recipent, message string) {
+	s.mu.Lock()
+	cl, exists := s.byName[recipent]
+	s.mu.Unlock()
+	if !exists {
+		log.Printf("%q username doesn't exist ", recipent)
+		return
+	}
+	if sender.name == recipent {
+		log.Printf("Sender and receiver is same")
+		return
+	}
+	ack := fmt.Sprintf("[message from %s]: %s", sender.name, message)
+
+	if err := cl.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		log.Printf("write to %v failed:%v", cl, err)
+	}
+	if _, err := cl.conn.Write([]byte(ack)); err != nil {
+		log.Printf("error writing meesage to %q: %q", cl, err)
+		return
+	}
 }
 
 func (s *Server) broadcast(senderConn net.Conn, message string) {
