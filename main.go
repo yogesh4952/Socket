@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 type client struct {
@@ -123,6 +124,11 @@ func (s *Server) broadcast(senderConn net.Conn, message string) {
 
 	ack := fmt.Sprintf("%s: %s", sender.name, message)
 	for _, cl := range targets {
+
+		if err := cl.conn.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil {
+			log.Printf("write to %v failed:%v", cl, err)
+		}
+
 		if _, err := cl.conn.Write([]byte(ack)); err != nil {
 			log.Printf("write to %v failed: %v", cl, err)
 		}
